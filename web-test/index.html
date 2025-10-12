@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiểm tra cấu hình</title>
+</head>
+<body style="font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding:24px">
+  <h1>Test cấu hình</h1>
+  <p>Nếu 2 dòng dưới hiện <b>OK</b>, tức là file cấu hình đã được load đúng.</p>
+
+  <!-- Nạp cấu hình (THỨ TỰ QUAN TRỌNG: internal_key.js trước, rồi cod_config.js) -->
+  <script src="internal_key.js"></script>
+  <script src="cod_config.js"></script>
+
+  <div id="result" style="margin-top:12px; padding:12px; border:1px solid #ddd; border-radius:8px"></div>
+
+  <script>
+    function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+    const ok1 = (typeof window.INTERNAL_API_KEY === 'string' && window.INTERNAL_API_KEY.length > 0);
+    const ok2 = !!(window.COD_BASE && window.COD_BASE.url && window.COD_BASE.key);
+
+    const el = document.getElementById('result');
+    el.innerHTML = `
+      <div>INTERNAL_API_KEY: <b>${ok1 ? 'OK' : 'MISSING'}</b></div>
+      <div>COD_BASE(url,key): <b>${ok2 ? 'OK' : 'MISSING'}</b></div>
+      <hr>
+      <div>Giá trị mẫu (ẩn bớt):</div>
+      <div>INTERNAL_API_KEY = ${ok1 ? esc(window.INTERNAL_API_KEY) : '<i>undefined</i>'}</div>
+      <div>SUPABASE_URL = ${ok2 ? esc(window.COD_BASE.url) : '<i>undefined</i>'}</div>
+      <div>SUPABASE_ANON_KEY = ${ok2 ? esc(window.COD_BASE.key.slice(0,12)) + '...' : '<i>undefined</i>'}</div>
+    `;
+  </script>
+</body>
+</html>
