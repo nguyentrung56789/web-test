@@ -1,36 +1,25 @@
-
 // web_dong_hang/api/getConfig.js
-// Hoàn chỉnh: trả cả Supabase và Map cấu hình, có kiểm tra CORS
 export default function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-internal-key"); // ← thêm dòng này
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  // ==== 1. Đọc Supabase ENV ====
   const url  = process.env.SUPABASE_URL || "";
   const anon = process.env.SUPABASE_ANON_KEY || "";
-
-  // ==== 2. Đọc Map ENV ====
-  const mapUrl  = process.env.link_map_apps_script || "";
+  const mapUrl   = process.env.link_map_apps_script || "";
   const mapSheet = process.env.sheet_id_map || "";
 
-  // ==== 3. Kiểm tra hợp lệ ====
   if (!url || !anon) {
     return res.status(500).json({ error: "Thiếu Supabase ENV", url: !!url, anon: !!anon });
   }
-
   if (!mapUrl || !mapSheet) {
     return res.status(500).json({ error: "Thiếu Map ENV", mapUrl: !!mapUrl, mapSheet: !!mapSheet });
   }
 
-  // ==== 4. Trả kết quả chung ====
   return res.status(200).json({
     url,
     anon,
-    map: {
-      APPS_URL: mapUrl,
-      SHEET_ID: mapSheet
-    }
+    map: { APPS_URL: mapUrl, SHEET_ID: mapSheet }
   });
 }
-
