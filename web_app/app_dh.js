@@ -46,16 +46,36 @@ function fmtDateVN(input){
 /* ===== Supabase REST helpers ===== */
 async function sbSelect(table, filterObj, selectCols='*'){
   const qs=new URLSearchParams({select:selectCols, ...filterObj}).toString();
-  const res=await fetch(`${CFG.url}/rest/v1/${table}?${qs}`,{headers:{apikey:CFG.key,Authorization:`Bearer ${CFG.key}`}});
+  const res=await fetch(`${confNV.url}/rest/v1/${table}?${qs}`,{
+    headers:{apikey:confNV.key,Authorization:`Bearer ${confNV.key}`}
+  });
   if(!res.ok)throw new Error(await res.text()); return res.json();
 }
 async function sbPatch(table, filterObj, bodyObj){
   const qs=new URLSearchParams(filterObj).toString();
-  const res=await fetch(`${CFG.url}/rest/v1/${table}?${qs}`,{method:'PATCH',headers:{apikey:CFG.key,Authorization:`Bearer ${CFG.key}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify(bodyObj)});
+  const res=await fetch(`${confNV.url}/rest/v1/${table}?${qs}`,{
+    method:'PATCH',
+    headers:{
+      apikey:confNV.key,
+      Authorization:`Bearer ${confNV.key}`,
+      'Content-Type':'application/json',
+      Prefer:'return=representation'
+    },
+    body:JSON.stringify(bodyObj)
+  });
   if(!res.ok)throw new Error(await res.text()); return res.json();
 }
 async function sbPost(table, body){
-  const res=await fetch(`${CFG.url}/rest/v1/${table}`,{method:'POST',headers:{apikey:CFG.key,Authorization:`Bearer ${CFG.key}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify(body)});
+  const res=await fetch(`${confNV.url}/rest/v1/${table}`,{
+    method:'POST',
+    headers:{
+      apikey:confNV.key,
+      Authorization:`Bearer ${confNV.key}`,
+      'Content-Type':'application/json',
+      Prefer:'return=representation'
+    },
+    body:JSON.stringify(body)
+  });
   if(!res.ok)throw new Error(await res.text()); return res.json();
 }
 
@@ -431,7 +451,7 @@ $('#saveBtn')?.addEventListener('click',()=>doSaveByMode());
 
 /* ===== Bottom sheets (Đơn hàng, Chi tiết) ===== */
 const fabScan=$('#fabScan'), tabBell=$('#tabBell'), bellNum=$('#bellNum'), tabOrders=$('#tabOrders');
-const ordersWrap=$('#ordersWrap'),ordersSheet=$('#ordersSheet'),ordersList=$('#ordersList'),ordersEmpty=$('#ordersEmpty'),statusFilter=$('#statusFilter');
+const ordersWrap=$('#ordersWrap'),ordersSheet=$('#ordersSheet'),ordersList=$('#ordersList'),ordersEmpty=$('#ordersEmpty'),statusFilter=$('#statusFilter']);
 const detailWrap=$('#detailWrap'),detailSheet=$('#detailSheet'),detailTitle=$('#detailTitle'),ctBody=$('#ctBody');
 const backOrders=$('#backOrders');
 
