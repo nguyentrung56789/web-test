@@ -7,7 +7,8 @@ export default function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
 
   // ==== 1. Đọc Supabase ENV ====
-
+  const url  = process.env.SUPABASE_URL || "";
+  const anon = process.env.SUPABASE_ANON_KEY || "";
 
   // ==== 2. Đọc Map ENV ====
   const mapUrl  = process.env.link_map_apps_script || "";
@@ -18,12 +19,18 @@ export default function handler(req, res) {
     return res.status(500).json({ error: "Thiếu Supabase ENV", url: !!url, anon: !!anon });
   }
 
+  if (!mapUrl || !mapSheet) {
+    return res.status(500).json({ error: "Thiếu Map ENV", mapUrl: !!mapUrl, mapSheet: !!mapSheet });
+  }
 
   // ==== 4. Trả kết quả chung ====
   return res.status(200).json({
     url,
     anon,
-   
+    map: {
+      APPS_URL: mapUrl,
+      SHEET_ID: mapSheet
+    }
   });
 }
 
