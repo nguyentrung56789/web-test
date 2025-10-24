@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#111" />
+<title>Check-in (Camera + GPS + Âm thanh)</title>
+<style>
+  :root{ --bar-h:76px }
+  html,body{height:100%;margin:0;min-height:-webkit-fill-available;background:#000;color:#fff;font-family:system-ui,Segoe UI,Roboto,Arial;overflow:hidden}
+  .stage{position:fixed;inset:0 0 var(--bar-h) 0;display:flex;align-items:center;justify-content:center;background:#000;z-index:1;height:calc(100vh - var(--bar-h))}
+  @supports (height:100dvh){.stage{height:calc(100dvh - var(--bar-h))}}
+  video,canvas{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;background:#000}
+
+  .bar{
+    position:fixed;left:0;right:0;bottom:0;height:var(--bar-h);
+    background:#111;border-top:1px solid rgba(255,255,255,.08);
+    display:flex;gap:10px;align-items:center;justify-content:center;
+    padding:10px calc(12px + env(safe-area-inset-right))
+             calc(10px + env(safe-area-inset-bottom))
+             calc(12px + env(safe-area-inset-left));
+    z-index:50;
+  }
+  .btn{appearance:none;border:none;border-radius:12px;padding:12px 16px;font-weight:700;font-size:16px;cursor:pointer;white-space:nowrap}
+  .btn-blue{background:#2563eb;color:#fff}
+  .btn-green{background:#10b981;color:#fff}
+  .btn-gray{background:#374151;color:#fff}
+  .btn-icon{padding:12px;width:48px;text-align:center}
+  .btn-on{background:#10b981!important;color:#fff!important}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+
+  #toast{
+    position:fixed;left:50%;top:0;transform:translate(-50%,-120%);
+    opacity:0;background:#e0f2fe;color:#075985;border:1px solid #38bdf8;
+    padding:10px 14px;border-radius:12px;font-weight:700;
+    transition:transform .25s ease,opacity .25s ease;z-index:99;
+    box-shadow:0 6px 22px rgba(0,0,0,.25);
+  }
+
+  #mapSheet{
+    position:fixed;left:0;right:0;bottom:0;top:0;background:#000;
+    border-top:2px solid #1e3a8a;transform:translateY(100%);
+    transition:transform .35s ease;z-index:90;display:flex;flex-direction:column;
+  }
+  #mapSheet.open{transform:translateY(0);}
+  #mapHeader{background:#1e3a8a;color:#fff;padding:12px 16px;text-align:center;font-weight:700;cursor:pointer;user-select:none}
+  #mapHeader .grab{display:inline-block;width:42px;height:5px;border-radius:3px;background:#ffffff55;margin:0 10px 2px 0;vertical-align:middle}
+  #mapFrame{flex:1;border:none;display:block;width:100%;}
+</style>
+</head>
+<body>
+  <div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none"></canvas>
+  </div>
+
+  <div class="bar" id="bar">
+    <button id="btnStart" class="btn btn-blue">Bật camera</button>
+    <button id="btnShot"  class="btn btn-green" disabled>📸 Chụp & gửi</button>
+    <button id="btnSound" class="btn btn-icon btn-gray" title="Bật/Tắt tiếng">🔊</button>
+    <button id="btnMap"   class="btn btn-gray" style="margin-left:auto">🗺️ Bản đồ</button>
+  </div>
+
+  <div id="toast"></div>
+  <iframe id="sink" name="sink" style="display:none"></iframe>
+  <audio id="snapSound" src="https://cdn.jsdelivr.net/gh/naptha/tesseract.js@master/examples/browser/sound/snap.wav" preload="auto"></audio>
+
+  <div id="mapSheet" aria-hidden="true">
+    <div id="mapHeader"><span class="grab"></span>🗺️ Bản đồ tuyến — bấm để đóng</div>
+    <iframe src="map_tuyen.html" id="mapFrame"></iframe>
+  </div>
+
+<script>
+const WEBHOOK_URL = "https://dhsybbqoe.datadex.vn/webhook/hoadon";
+const TARGET_W = 900, TARGET_H = 1600;
+
+/* ========= DOM ========= */
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const btnStart=document.getElementById('btnStart');
+const btnShot=document.getElementById('btnShot');
+const btnSound=document.getElementById('btnSound');
+const snapAudio=document.getElementById('snapSound');
+const toastEl=document.getElementById('toast');
+const mapSheet=document.getElementById('mapSheet');
+const mapHeader=document.getElementById('mapHeader');
+const btnMap=document.getElementById('btnMap');
+const bar=document.getElementById('bar');
+let stream=null;
+
+/* ====== Web Audio: shutter mạnh + compressor ====== */
+let audioCtx = null, compressor = null;
+const SHUTTER_GAIN = 0.9; // tăng/giảm “độ lực” (0.0–1.0)
+
+function ensureAudioCtx(){
+  if(!audioCtx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    // Compressor để tăng cảm giác to mà không méo
+    compressor = audioCtx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-24, audioCtx.currentTime);
+    compressor.knee.setValueAtTime(30, audioCtx.currentTime);
+    compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+    compressor.attack.setValueAtTime(0.002, audioCtx.currentTime);
+    compressor.release.setValueAtTime(0.1, audioCtx.currentTime);
+    compressor.connect(audioCtx.destination);
+  }
+  if(audioCtx.state === 'suspended') return audioCtx.resume();
+  return Promise.resolve();
+}
+
+function noiseBurst(ctx, t0, dur=0.03){ // burst “click” rất ngắn
+  const len = Math.floor(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let i=0;i<len;i++) data[i] = (Math.random()*2-1) * 0.6; // white noise
+  const src = ctx.createBufferSource(); src.buffer = buf;
+
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(SHUTTER_GAIN, t0 + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+
+  // nhẹ low-pass để bớt chói
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.setValueAtTime(4500, t0);
+
+  src.connect(lp); lp.connect(g); g.connect(compressor);
+  src.start(t0); src.stop(t0 + dur + 0.01);
+}
+
+async function playShutter(){
+  if(!soundEnabled) return;
+  await ensureAudioCtx();
+  const ctx = audioCtx;
+  const now = ctx.currentTime;
+
+  // Burst “click” đầu
+  noiseBurst(ctx, now, 0.035);
+
+  // Beep 1 (vuông cho lực)
+  const osc1 = ctx.createOscillator();
+  const g1 = ctx.createGain();
+  osc1.type = 'square';
+  osc1.frequency.setValueAtTime(1400, now);
+  g1.gain.setValueAtTime(0, now);
+  g1.gain.linearRampToValueAtTime(SHUTTER_GAIN, now + 0.01);
+  g1.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+  osc1.connect(g1); g1.connect(compressor);
+  osc1.start(now); osc1.stop(now + 0.1);
+
+  // Beep 2 (thấp hơn, nối tiếp)
+  const t2 = now + 0.06;
+  const osc2 = ctx.createOscillator();
+  const g2 = ctx.createGain();
+  osc2.type = 'square';
+  osc2.frequency.setValueAtTime(950, t2);
+  g2.gain.setValueAtTime(0, t2);
+  g2.gain.linearRampToValueAtTime(SHUTTER_GAIN*0.7, t2 + 0.012);
+  g2.gain.exponentialRampToValueAtTime(0.001, t2 + 0.08);
+  osc2.connect(g2); g2.connect(compressor);
+  osc2.start(t2); osc2.stop(t2 + 0.09);
+
+  // Haptic (Android WebView/Chrome thường hỗ trợ)
+  if (navigator.vibrate) navigator.vibrate(30);
+}
+
+// unlock audio khi có thao tác tay
+['btnStart','btnShot','btnSound','btnMap','mapHeader'].forEach(id=>{
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', ()=>ensureAudioCtx());
+});
+
+
+/* ========= Toast ========= */
+function toast(t,type='info',ms=2400){
+  toastEl.textContent=t;
+  toastEl.style.opacity='1';
+  toastEl.style.transform='translate(-50%,10px)';
+  clearTimeout(toast._t);
+  toast._t=setTimeout(()=>{
+    toastEl.style.opacity='0';
+    toastEl.style.transform='translate(-50%,-120%)';
+  },ms);
+}
+
+/* ========= Âm thanh ========= */
+let soundEnabled=(localStorage.getItem('soundEnabled')??'1')==='1';
+function renderSoundBtn(){
+  if(soundEnabled){
+    btnSound.classList.add('btn-on');
+    btnSound.textContent='🔊';
+    btnSound.title='Đang bật tiếng (bấm để tắt)';
+  }else{
+    btnSound.classList.remove('btn-on');
+    btnSound.textContent='🔇';
+    btnSound.title='Đang tắt tiếng (bấm để bật)';
+  }
+}
+renderSoundBtn();
+btnSound.onclick=()=>{
+  soundEnabled=!soundEnabled;
+  localStorage.setItem('soundEnabled',soundEnabled?'1':'0');
+  renderSoundBtn();
+  toast(soundEnabled?'Đã bật tiếng chụp':'Đã tắt tiếng chụp');
+};
+
+/* ========= Camera ========= */
+async function startCam(){
+  try{
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    const base={video:{width:{ideal:1080},height:{ideal:1920}},audio:false};
+    let c={...base,video:{...base.video,facingMode:{exact:'environment'}}};
+    try{stream=await navigator.mediaDevices.getUserMedia(c);}
+    catch{c.video.facingMode={ideal:'environment'};stream=await navigator.mediaDevices.getUserMedia(c);}
+    video.srcObject=stream;
+    await new Promise(r=>video.onloadedmetadata=r);
+    btnShot.disabled=false;
+    toast('Đã bật camera','ok');
+  }catch(e){btnShot.disabled=true;toast('Lỗi camera: '+e.message,'err',4200);}
+}
+function stopCam(){if(stream){try{stream.getTracks().forEach(t=>t.stop());}catch{}stream=null;video.srcObject=null;}}
+function drawToCanvas(){
+  const fw=video.videoWidth,fh=video.videoHeight;if(!fw||!fh)return;
+  const ar=fw/fh,desired=TARGET_W/TARGET_H;let sx=0,sy=0,sw=fw,sh=fh;
+  if(ar>desired){sw=fh*desired;sx=(fw-sw)/2;}else{sh=fw/desired;sy=(fh-sh)/2;}
+  canvas.width=TARGET_W;canvas.height=TARGET_H;
+  canvas.getContext('2d').drawImage(video,sx,sy,sw,sh,0,0,TARGET_W,TARGET_H);
+}
+function getGPSOnce(){return new Promise(r=>{
+  if(!('geolocation'in navigator))return r(null);
+  navigator.geolocation.getCurrentPosition(p=>r({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),_=>r(null),{enableHighAccuracy:true,timeout:10000,maximumAge:0});
+});}
+function postForm(url,f){
+  let form=document.getElementById('hiddenForm');
+  if(!form){form=document.createElement('form');form.id='hiddenForm';form.method='POST';form.target='sink';form.style.display='none';document.body.appendChild(form);}
+  form.action=url;form.innerHTML='';
+  for(const[k,v]of Object.entries(f)){const i=document.createElement('input');i.type='hidden';i.name=k;i.value=v??'';form.appendChild(i);}
+  form.submit();
+}
+
+/* ========= Events ========= */
+btnStart.onclick=startCam;
+btnShot.onclick=async()=>{
+  if(!stream){toast('Chưa bật camera','err');return;}
+  if(soundEnabled){snapAudio.currentTime=0;snapAudio.play().catch(()=>{});}
+  await playShutter();
+
+  drawToCanvas();
+  const mime='image/jpeg',dataUrl=canvas.toDataURL(mime,0.85);
+  const gps=await getGPSOnce();
+  postForm(WEBHOOK_URL+'?action=checkin',{gps_json:JSON.stringify(gps),image_mime:mime,image_b64:dataUrl.split(',')[1]});
+  toast('Đã gửi webhook','ok');
+};
+
+/* ========= MAP CONTROL ========= */
+btnMap.onclick=()=>{stopCam();bar.style.display='none';mapSheet.classList.add('open');};
+mapHeader.onclick=()=>{mapSheet.classList.remove('open');bar.style.display='flex';startCam();};
+
+/* ========= Auto cam/gps ========= */
+(async()=>{
+  try{
+    const camPerm=await navigator.permissions.query({name:'camera'});
+    const geoPerm=await navigator.permissions.query({name:'geolocation'});
+    if(camPerm.state==='granted')await startCam();
+    if(geoPerm.state==='granted')navigator.geolocation.getCurrentPosition(()=>{},()=>{});
+  }catch(e){}
+})();
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam();else if(!mapSheet.classList.contains('open'))startCam();});
+</script>
+</body>
+</html>
